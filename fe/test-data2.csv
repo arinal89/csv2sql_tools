@@ -1,0 +1,6 @@
+user_id,full_name,email_address,years_old,location,department
+101,Michael Johnson,michael@company.com,29,Seattle,Engineering
+102,Sarah Williams,sarah@company.com,34,Portland,Marketing
+103,David Brown,david@company.com,27,Denver,Sales
+104,Lisa Davis,lisa@company.com,31,Austin,HR
+105,Robert Wilson,robert@company.com,26,Miami,Finance

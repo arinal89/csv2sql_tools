@@ -1,0 +1,29 @@
+{
+  "version": "1.0.0",
+  "name": "CSV Tools Frontend",
+  "description": "Modern web application for CSV processing",
+  "releaseDate": "2025-01-05",
+  "features": [
+    "CSV to SQL conversion",
+    "CSV normalization with multi-file support",
+    "Data type analysis",
+    "NULL value handling",
+    "SQL file splitting"
+  ],
+  "changelog": {
+    "1.0.0": {
+      "date": "2025-01-05",
+      "type": "release",
+      "changes": [
+        "Initial release of CSV Tools Frontend",
+        "Implemented CSV to SQL converter with batch processing",
+        "Added CSV normalization with multi-file support and column mapping",
+        "Created data type analysis tool",
+        "Built NULL handling system",
+        "Added SQL file splitter",
+        "Implemented responsive UI with Tailwind CSS",
+        "Added drag-and-drop file upload"
+      ]
+    }
+  }
+}
