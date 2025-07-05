@@ -17,8 +17,22 @@ def process_csv():
         return jsonify({"error": "No selected file"}), 400
     
     try:
-        # Read the CSV file
-        df = pd.read_csv(file)
+        # Try to read the CSV file with more flexible error handling
+        skipped_lines = 0
+        try:
+            # First attempt with standard reading
+            df = pd.read_csv(file)
+        except pd.errors.ParserError as e:
+            # If it fails, try again with on_bad_lines='skip' (or error_bad_lines=False for older pandas)
+            try:
+                file.seek(0)  # Reset file pointer
+                df = pd.read_csv(file, on_bad_lines='skip')
+                skipped_lines = 1  # We don't know exactly how many, but there were some
+            except TypeError:
+                # For older pandas versions
+                file.seek(0)  # Reset file pointer
+                df = pd.read_csv(file, error_bad_lines=False)
+                skipped_lines = 1  # We don't know exactly how many, but there were some
         
         # Get basic stats
         stats = {
@@ -27,6 +41,10 @@ def process_csv():
             "columns": list(df.columns),
             "previewData": json.loads(df.head(5).to_json(orient='records'))
         }
+        
+        # Add warning if lines were skipped
+        if skipped_lines > 0:
+            stats["warning"] = "Some malformed lines were skipped during CSV parsing"
         
         return jsonify(stats), 200
     
@@ -46,8 +64,22 @@ def normalize_csv():
         return jsonify({"error": "No selected file"}), 400
     
     try:
-        # Read the CSV file
-        df = pd.read_csv(file)
+        # Try to read the CSV file with more flexible error handling
+        skipped_lines = 0
+        try:
+            # First attempt with standard reading
+            df = pd.read_csv(file)
+        except pd.errors.ParserError as e:
+            # If it fails, try again with on_bad_lines='skip' (or error_bad_lines=False for older pandas)
+            try:
+                file.seek(0)  # Reset file pointer
+                df = pd.read_csv(file, on_bad_lines='skip')
+                skipped_lines = 1  # We don't know exactly how many, but there were some
+            except TypeError:
+                # For older pandas versions
+                file.seek(0)  # Reset file pointer
+                df = pd.read_csv(file, error_bad_lines=False)
+                skipped_lines = 1  # We don't know exactly how many, but there were some
         
         # Normalize the data (here we're applying basic normalization)
         # For numeric columns, apply min-max scaling
@@ -66,6 +98,10 @@ def normalize_csv():
             "normalizedData": normalized_data,
             "rowCount": len(df)
         }
+        
+        # Add warning if lines were skipped
+        if skipped_lines > 0:
+            result["warning"] = "Some malformed lines were skipped during CSV parsing"
         
         return jsonify(result), 200
     
@@ -130,62 +166,106 @@ def determine_datatypes():
         return jsonify({"error": "No selected file"}), 400
     
     try:
-        # Read the CSV file with all columns as string first
-        df = pd.read_csv(file, dtype=str)
+        # Try to read the CSV file with more flexible error handling
+        skipped_lines = 0
+        try:
+            # First attempt with standard reading
+            df = pd.read_csv(file, dtype=str)
+        except pd.errors.ParserError as e:
+            # If it fails, try again with error_bad_lines=False (renamed to on_bad_lines in newer versions)
+            try:
+                file.seek(0)  # Reset file pointer
+                df = pd.read_csv(file, dtype=str, on_bad_lines='skip')
+                skipped_lines = 1  # We don't know exactly how many, but there were some
+            except TypeError:
+                # For older pandas versions
+                file.seek(0)  # Reset file pointer
+                df = pd.read_csv(file, dtype=str, error_bad_lines=False)
+                skipped_lines = 1  # We don't know exactly how many, but there were some
+        except Exception as e:
+            # Last resort: try with minimal options and low_memory=False
+            print(f"CSV parsing error: {str(e)}")
+            file.seek(0)  # Reset file pointer
+            try:
+                df = pd.read_csv(file, dtype=str, sep=None, engine='python', low_memory=False)
+            except Exception as e2:
+                print(f"Failed all CSV parsing attempts: {str(e2)}")
+                raise ValueError(f"Could not parse CSV file: {str(e2)}. Try checking for invalid characters or inconsistent formatting.")
         
         # Analyze data types
         type_info = {}
         for column in df.columns:
-            # Check if column can be converted to numeric
-            numeric_conversion = pd.to_numeric(df[column], errors='coerce')
-            null_count_before = df[column].isna().sum()
-            null_count_after = numeric_conversion.isna().sum()
-            
-            # If we didn't introduce too many new nulls, it's probably numeric
-            if null_count_after - null_count_before < len(df) * 0.1:
-                # Check if integer
-                if pd.Series(numeric_conversion.dropna() % 1 == 0).all():
-                    type_info[column] = {
-                        'detected': 'integer',
-                        'nullCount': null_count_after
-                    }
-                else:
-                    type_info[column] = {
-                        'detected': 'float',
-                        'nullCount': null_count_after
-                    }
-            else:
-                # Check if datetime
-                try:
-                    datetime_conversion = pd.to_datetime(df[column], errors='coerce')
-                    null_count_datetime = datetime_conversion.isna().sum()
-                    if null_count_datetime - null_count_before < len(df) * 0.1:
+            try:
+                # Check if column can be converted to numeric
+                numeric_conversion = pd.to_numeric(df[column], errors='coerce')
+                null_count_before = df[column].isna().sum()
+                null_count_after = numeric_conversion.isna().sum()
+                
+                # If we didn't introduce too many new nulls, it's probably numeric
+                if null_count_after - null_count_before < len(df) * 0.1:
+                    # Check if integer
+                    if pd.Series(numeric_conversion.dropna() % 1 == 0).all():
                         type_info[column] = {
-                            'detected': 'datetime',
-                            'nullCount': null_count_datetime
+                            'detected': 'integer',
+                            'nullCount': int(null_count_after)  # Ensure this is JSON serializable
                         }
                     else:
                         type_info[column] = {
-                            'detected': 'string',
-                            'nullCount': null_count_before
+                            'detected': 'float',
+                            'nullCount': int(null_count_after)  # Ensure this is JSON serializable
                         }
-                except:
-                    type_info[column] = {
-                        'detected': 'string',
-                        'nullCount': null_count_before
-                    }
+                else:
+                    # Check if datetime
+                    try:
+                        datetime_conversion = pd.to_datetime(df[column], errors='coerce')
+                        null_count_datetime = datetime_conversion.isna().sum()
+                        if null_count_datetime - null_count_before < len(df) * 0.1:
+                            type_info[column] = {
+                                'detected': 'datetime',
+                                'nullCount': int(null_count_datetime)  # Ensure this is JSON serializable
+                            }
+                        else:
+                            type_info[column] = {
+                                'detected': 'string',
+                                'nullCount': int(null_count_before)  # Ensure this is JSON serializable
+                            }
+                    except Exception as e:
+                        print(f"Datetime detection error: {str(e)}")
+                        type_info[column] = {
+                            'detected': 'string',
+                            'nullCount': int(null_count_before)  # Ensure this is JSON serializable
+                        }
+            except Exception as e:
+                print(f"Error analyzing column '{column}': {str(e)}")
+                # Default to string if anything goes wrong
+                type_info[column] = {
+                    'detected': 'string',
+                    'nullCount': 0
+                }
+        
+        # Prepare safe preview data
+        try:
+            preview_data = json.loads(df.head(5).to_json(orient='records'))
+        except Exception as e:
+            print(f"Error creating preview data: {str(e)}")
+            preview_data = []  # Fallback to empty preview if conversion fails
         
         result = {
             "typeInfo": type_info,
             "rowCount": len(df),
             "columnCount": len(df.columns),
-            "previewData": json.loads(df.head(5).to_json(orient='records'))
+            "previewData": preview_data
         }
+        
+        # Add warning if lines were skipped
+        if skipped_lines > 0:
+            result["warning"] = "Some malformed lines were skipped during CSV parsing"
         
         return jsonify(result), 200
     
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print(f"Unhandled exception in determine_datatypes: {str(e)}")
+        return jsonify({"error": f"Failed to analyze CSV: {str(e)}"}), 500
 
 @main_bp.route('/api/csv-to-sql', methods=['POST'])
 def csv_to_sql():

@@ -1,6 +1,6 @@
 import { createSignal, Show, For } from 'solid-js';
 import type { Component } from 'solid-js';
-import { Upload, Download, Shield, AlertCircle, CheckCircle, BarChart3 } from 'lucide-solid';
+import { Upload, Download, Shield, AlertCircle, CheckCircle, BarChart3, Loader } from 'lucide-solid';
 import { useTheme } from '../contexts/ThemeContext';
 import Papa from 'papaparse';
 import { handleNulls } from '../services/api';
@@ -30,6 +30,8 @@ const NullHandling: Component = () => {
   const [error, setError] = createSignal('');
   const [success, setSuccess] = createSignal('');
   const [fileName, setFileName] = createSignal('');
+  const [loadingProgress, setLoadingProgress] = createSignal(0);
+  const [showLoadingPopup, setShowLoadingPopup] = createSignal(false);
   
   const [globalConfig, setGlobalConfig] = createSignal<NullHandlingConfig>({
     strategy: 'replace',
@@ -168,6 +170,9 @@ const NullHandling: Component = () => {
     setError('');
     setSuccess('');
 
+    // Simulate progress for the loading popup
+    const progressInterval = simulateProgress();
+
     try {
       // Convert data format for API
       const apiData = data.data.map((row, rowIndex) => {
@@ -225,6 +230,8 @@ const NullHandling: Component = () => {
       setError(`Error handling null values: ${err.message}`);
     } finally {
       setLoading(false);
+      clearInterval(progressInterval);
+      setShowLoadingPopup(false);
     }
   };
 
@@ -255,6 +262,21 @@ const NullHandling: Component = () => {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
     setSuccess('Processed CSV downloaded!');
+  };
+
+  const simulateProgress = () => {
+    setShowLoadingPopup(true);
+    setLoadingProgress(0);
+    
+    const interval = setInterval(() => {
+      setLoadingProgress(prev => {
+        // Gradually increase up to 90%, leaving room for the actual API response
+        const nextProgress = prev + (90 - prev) * 0.1;
+        return nextProgress > 90 ? 90 : nextProgress;
+      });
+    }, 100);
+    
+    return interval;
   };
 
   return (
@@ -601,6 +623,56 @@ const NullHandling: Component = () => {
             <span class={theme() === 'dark' ? 'text-green-300' : 'text-green-800'}>
               {success()}
             </span>
+          </div>
+        </div>
+      </Show>
+
+      {/* Loading Popup */}
+      <Show when={showLoadingPopup()}>
+        <div class="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50">
+          <div class={`bg-white rounded-lg shadow-lg p-6 ${
+            theme() === 'dark' ? 'bg-gray-800' : 'bg-white'
+          }`}>
+            <div class="flex items-center justify-between mb-4">
+              <h3 class={`text-lg font-semibold ${
+                theme() === 'dark' ? 'text-white' : 'text-gray-900'
+              }`}>
+                Processing NULL Values
+              </h3>
+              <button
+                onClick={() => setShowLoadingPopup(false)}
+                class="text-gray-500 hover:text-gray-700"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div class="flex items-center space-x-2">
+              <Loader class="w-5 h-5 animate-spin text-orange-500" />
+              <span class={`text-sm ${
+                theme() === 'dark' ? 'text-gray-400' : 'text-gray-600'
+              }`}>
+                Please wait, this may take a few minutes...
+              </span>
+            </div>
+            <div class="mt-4">
+              <div class="flex items-center justify-between mb-2">
+                <span class={`text-xs ${
+                  theme() === 'dark' ? 'text-gray-400' : 'text-gray-500'
+                }`}>
+                  Progress
+                </span>
+                <span class={`text-xs font-semibold ${
+                  theme() === 'dark' ? 'text-gray-200' : 'text-gray-800'
+                }`}>
+                  {Math.round(loadingProgress())}%
+                </span>
+              </div>
+              <div class="w-full bg-gray-200 rounded-full h-2.5">
+                <div class="bg-orange-600 h-2.5 rounded-full" style={{ width: `${loadingProgress()}%` }}></div>
+              </div>
+            </div>
           </div>
         </div>
       </Show>

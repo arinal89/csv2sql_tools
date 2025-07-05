@@ -1,4 +1,4 @@
-import { createSignal, Show, For } from 'solid-js';
+import { createSignal, Show, For, onCleanup } from 'solid-js';
 import type { Component } from 'solid-js';
 import { Upload, Download, Settings, AlertCircle, CheckCircle, X, FileText, Eye } from 'lucide-solid';
 import { useTheme } from '../contexts/ThemeContext';
@@ -24,9 +24,15 @@ const NormalizeCSV: Component = () => {
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal('');
   const [success, setSuccess] = createSignal('');
+  const [progress, setProgress] = createSignal(0);
   const [removeDuplicates, setRemoveDuplicates] = createSignal(true);
   const [trimWhitespace, setTrimWhitespace] = createSignal(true);
   const [standardizeHeaders, setStandardizeHeaders] = createSignal(true);
+  let progressInterval: NodeJS.Timeout | null = null;
+  
+  onCleanup(() => {
+    if (progressInterval) clearInterval(progressInterval);
+  });
 
   const handleFileUpload = async (event: Event) => {
     const target = event.target as HTMLInputElement;
@@ -45,9 +51,8 @@ const NormalizeCSV: Component = () => {
         if (!file.name.toLowerCase().endsWith('.csv')) {
           return Promise.reject(new Error(`${file.name} is not a CSV file`));
         }
-        if (file.size > 10 * 1024 * 1024) { // 10MB limit
-          return Promise.reject(new Error(`${file.name} is too large (max 10MB)`));
-        }
+        // No file size limit
+        // Note: Very large files may affect performance
 
         return new Promise<CSVFile>((resolve, reject) => {
           Papa.parse(file, {
@@ -158,6 +163,27 @@ const NormalizeCSV: Component = () => {
       .replace(/^_|_$/g, '');
   };
 
+  const simulateProgress = () => {
+    setProgress(0);
+    // Clear any existing interval
+    if (progressInterval) {
+      clearInterval(progressInterval);
+    }
+    
+    progressInterval = setInterval(() => {
+      setProgress((prev) => {
+        // Move faster at the beginning, slower as we approach 95%
+        const increment = prev < 50 ? 8 : (prev < 80 ? 4 : 1);
+        // Only go up to 95% in simulation, the last 5% will be set when API call completes
+        if (prev >= 95) {
+          clearInterval(progressInterval!);
+          return 95;
+        }
+        return prev + increment;
+      });
+    }, 300); // Update more frequently (300ms)
+  };
+
   const normalizeData = async () => {
     if (csvFiles().length === 0) {
       setError('No CSV files uploaded');
@@ -167,6 +193,7 @@ const NormalizeCSV: Component = () => {
     setLoading(true);
     setError('');
     setSuccess('');
+    simulateProgress(); // Start simulating progress
 
     try {
       // Get the first file for demonstration purposes
@@ -181,19 +208,28 @@ const NormalizeCSV: Component = () => {
       // Call Python backend API for normalization
       const result = await normalizeCSV(file);
       
+      // Set progress to almost complete
+      setProgress(98);
+      
       if (result && result.normalizedData) {
         // Extract headers and data from the normalized result
         const normalizedRecords = result.normalizedData;
         
         if (normalizedRecords.length > 0) {
           const headers = Object.keys(normalizedRecords[0]);
-          const data = normalizedRecords.map(record => 
+          const data = normalizedRecords.map((record: any) => 
             headers.map(header => record[header])
           );
           
           setNormalizedHeaders(headers);
           setNormalizedData(data);
-          setSuccess(`Data normalized successfully! ${result.rowCount} rows processed.`);
+          
+          // Create success message and append warning if present
+          let successMsg = `Data normalized successfully! ${result.rowCount} rows processed.`;
+          if (result.warning) {
+            successMsg += ` (Note: ${result.warning})`;
+          }
+          setSuccess(successMsg);
         } else {
           setNormalizedHeaders([]);
           setNormalizedData([]);
@@ -202,10 +238,26 @@ const NormalizeCSV: Component = () => {
       } else {
         throw new Error('Invalid response from server');
       }
+      
+      // Complete the progress and delay closing the loading popup
+      setProgress(100);
+      setTimeout(() => {
+        setLoading(false);
+      }, 500);
     } catch (err: any) {
       setError(`Error normalizing data: ${err.message}`);
-    } finally {
+      if (progressInterval) {
+        clearInterval(progressInterval);
+        progressInterval = null;
+      }
       setLoading(false);
+      setProgress(0);
+    } finally {
+      // Clear the interval if it's still running
+      if (progressInterval) {
+        clearInterval(progressInterval);
+        progressInterval = null;
+      }
     }
   };
 
@@ -311,7 +363,7 @@ const NormalizeCSV: Component = () => {
               }
             </p>
             <p class={`text-xs ${theme() === 'dark' ? 'text-gray-500' : 'text-gray-400'}`}>
-              Maximum file size: 10MB per file
+              Files of any size are supported
             </p>
           </div>
         </div>
@@ -784,6 +836,23 @@ const NormalizeCSV: Component = () => {
             <span class={theme() === 'dark' ? 'text-green-300' : 'text-green-800'}>
               {success()}
             </span>
+          </div>
+        </div>
+      </Show>
+      
+      {/* Loading Popup */}
+      <Show when={loading()}>
+        <div class="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50">
+          <div class="bg-white rounded-lg shadow-lg p-6 max-w-sm w-full text-center">
+            <div class="relative w-full h-4 bg-gray-200 rounded-full overflow-hidden mb-4">
+              <div
+                class="absolute top-0 left-0 h-full bg-blue-500 transition-all"
+                style={{ width: `${progress()}%` }}
+              ></div>
+            </div>
+            <p class="text-gray-700 text-sm">
+              Normalizing data, please wait... {progress()}%
+            </p>
           </div>
         </div>
       </Show>

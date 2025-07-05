@@ -1,6 +1,6 @@
 import { createSignal, Show, For } from 'solid-js';
 import type { Component } from 'solid-js';
-import { Upload, Download, Scissors, AlertCircle, CheckCircle, FileText } from 'lucide-solid';
+import { Upload, Download, Scissors, AlertCircle, CheckCircle, FileText, Loader } from 'lucide-solid';
 import { useTheme } from '../contexts/ThemeContext';
 import { splitSQL } from '../services/api';
 
@@ -17,6 +17,8 @@ const SQLSplitter: Component = () => {
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal('');
   const [success, setSuccess] = createSignal('');
+  const [loadingProgress, setLoadingProgress] = createSignal(0);
+  const [showLoadingPopup, setShowLoadingPopup] = createSignal(false);
   
   const [splitMethod, setSplitMethod] = createSignal<'lines' | 'statements' | 'size'>('statements');
   const [linesPerFile, setLinesPerFile] = createSignal(1000);
@@ -78,6 +80,20 @@ const SQLSplitter: Component = () => {
     setLoading(true);
     setError('');
     setSuccess('');
+    setLoadingProgress(0);
+    setShowLoadingPopup(true);
+
+    // Simulate progress for demo purposes
+    const progressInterval = setInterval(() => {
+      setLoadingProgress(prev => {
+        const nextProgress = prev + 10;
+        if (nextProgress >= 100) {
+          clearInterval(progressInterval);
+          return 100;
+        }
+        return nextProgress;
+      });
+    }, 1000);
 
     try {
       // Determine the chunk size based on selected split method
@@ -119,6 +135,7 @@ const SQLSplitter: Component = () => {
       setError(`Error splitting SQL file: ${err.message}`);
     } finally {
       setLoading(false);
+      setShowLoadingPopup(false);
     }
   };
 
@@ -501,6 +518,45 @@ const SQLSplitter: Component = () => {
             <span class={theme() === 'dark' ? 'text-green-300' : 'text-green-800'}>
               {success()}
             </span>
+          </div>
+        </div>
+      </Show>
+
+      {/* Loading Popup */}
+      <Show when={showLoadingPopup()}>
+        <div class="fixed inset-0 flex items-center justify-center z-50 bg-black bg-opacity-50">
+          <div class={`bg-white rounded-lg shadow-lg p-6 ${
+            theme() === 'dark' ? 'bg-gray-800' : 'bg-white'
+          }`}>
+            <div class="flex items-center justify-between mb-4">
+              <h3 class={`text-lg font-semibold ${
+                theme() === 'dark' ? 'text-white' : 'text-gray-900'
+              }`}>Processing...</h3>
+              <button
+                onClick={() => setShowLoadingPopup(false)}
+                class="text-gray-500 hover:text-gray-700"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div class="flex items-center space-x-2 mb-4">
+              <Loader class="w-6 h-6 text-red-500 animate-spin" />
+              <div class="w-full bg-gray-200 rounded-full h-2.5">
+                <div
+                  class="bg-red-600 h-2.5 rounded-full"
+                  style={{ width: `${loadingProgress()}%` }}
+                />
+              </div>
+            </div>
+
+            <p class={`text-center text-sm ${
+              theme() === 'dark' ? 'text-gray-400' : 'text-gray-600'
+            }`}>
+              {`Splitting SQL file... ${Math.round(loadingProgress())}%`}
+            </p>
           </div>
         </div>
       </Show>

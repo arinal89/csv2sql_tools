@@ -172,7 +172,13 @@ const CSVToSQL: Component = () => {
           ].join('\n');
           
           setSqlResult(fullSQL);
-          setSuccess('SQL generated successfully!');
+          
+          // Create success message and append warning if present
+          let successMsg = 'SQL generated successfully!';
+          if (response.warning) {
+            successMsg += ` (Note: ${response.warning})`;
+          }
+          setSuccess(successMsg);
           
           // Complete the progress and delay closing the loading popup slightly
           // to ensure the user sees the 100% completion

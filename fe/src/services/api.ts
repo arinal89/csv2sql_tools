@@ -13,17 +13,41 @@ export const processCSV = async (file: File) => {
   const formData = new FormData();
   formData.append('file', file);
   
-  const response = await fetch(`${API_BASE_URL}/process-csv`, {
-    method: 'POST',
-    body: formData,
-  });
-  
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to process CSV');
+  try {
+    // Set a longer timeout for large files (120 seconds)
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 120000);
+    
+    const response = await fetch(`${API_BASE_URL}/process-csv`, {
+      method: 'POST',
+      body: formData,
+      signal: controller.signal
+    });
+    
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      // Try to parse error response as JSON
+      try {
+        const error = await response.json();
+        throw new Error(error.error || `Failed to process CSV (${response.status})`);
+      } catch (jsonError) {
+        // If JSON parsing fails, use text response
+        const errorText = await response.text();
+        throw new Error(errorText || `Failed to process CSV (${response.status})`);
+      }
+    }
+    
+    return response.json();
+  } catch (error: any) {
+    // Handle specific errors with more user-friendly messages
+    if (error.name === 'AbortError') {
+      throw new Error('Request timed out. The file may be too large for server processing.');
+    } else if (error.message && error.message.includes('NetworkError')) {
+      throw new Error('Network error. The file may be too large for upload.');
+    }
+    throw error;
   }
-  
-  return response.json();
 };
 
 /**
@@ -61,17 +85,41 @@ export const normalizeCSV = async (file: File) => {
   const formData = new FormData();
   formData.append('file', file);
   
-  const response = await fetch(`${API_BASE_URL}/normalize-csv`, {
-    method: 'POST',
-    body: formData,
-  });
-  
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to normalize CSV');
+  try {
+    // Set a longer timeout for large files (120 seconds)
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 120000);
+    
+    const response = await fetch(`${API_BASE_URL}/normalize-csv`, {
+      method: 'POST',
+      body: formData,
+      signal: controller.signal
+    });
+    
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      // Try to parse error response as JSON
+      try {
+        const error = await response.json();
+        throw new Error(error.error || `Failed to normalize CSV (${response.status})`);
+      } catch (jsonError) {
+        // If JSON parsing fails, use text response
+        const errorText = await response.text();
+        throw new Error(errorText || `Failed to normalize CSV (${response.status})`);
+      }
+    }
+    
+    return response.json();
+  } catch (error: any) {
+    // Handle specific errors with more user-friendly messages
+    if (error.name === 'AbortError') {
+      throw new Error('Request timed out. The file may be too large for server processing.');
+    } else if (error.message && error.message.includes('NetworkError')) {
+      throw new Error('Network error. The file may be too large for upload.');
+    }
+    throw error;
   }
-  
-  return response.json();
 };
 
 /**
@@ -116,17 +164,43 @@ export const determineDataTypes = async (file: File) => {
   const formData = new FormData();
   formData.append('file', file);
   
-  const response = await fetch(`${API_BASE_URL}/determine-datatypes`, {
-    method: 'POST',
-    body: formData,
-  });
-  
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to determine data types');
+  try {
+    // Set a longer timeout for large files (120 seconds)
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 120000);
+    
+    const response = await fetch(`${API_BASE_URL}/determine-datatypes`, {
+      method: 'POST',
+      body: formData,
+      signal: controller.signal
+    });
+    
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      // Try to parse error response as JSON
+      try {
+        const error = await response.json();
+        throw new Error(error.error || `Failed to determine data types (${response.status})`);
+      } catch (jsonError) {
+        // If JSON parsing fails, use text response
+        const errorText = await response.text();
+        throw new Error(errorText || `Failed to determine data types (${response.status})`);
+      }
+    }
+    
+    return response.json();
+  } catch (error: any) {
+    // Handle specific errors with more user-friendly messages
+    if (error.name === 'AbortError') {
+      throw new Error('Request timed out. The file may be too large for server processing.');
+    } else if (error.message && error.message.includes('Expected') && error.message.includes('fields')) {
+      throw new Error(`CSV format error: Your file has inconsistent columns. ${error.message}`);
+    } else if (error.message && error.message.includes('NetworkError')) {
+      throw new Error('Network error. The file may be too large for upload.');
+    }
+    throw error;
   }
-  
-  return response.json();
 };
 
 /**
