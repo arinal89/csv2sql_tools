@@ -1,6 +1,6 @@
-import { createSignal, Show } from 'solid-js';
+import { createSignal, Show, onCleanup } from 'solid-js';
 import type { Component } from 'solid-js';
-import { Upload, Download, Copy, FileText, AlertCircle, CheckCircle } from 'lucide-solid';
+import { Upload, Download, Copy, FileText, AlertCircle, CheckCircle, Maximize2, Minimize2 } from 'lucide-solid';
 import { useTheme } from '../contexts/ThemeContext';
 import Papa from 'papaparse';
 import { csvToSQL } from '../services/api';
@@ -21,6 +21,9 @@ const CSVToSQL: Component = () => {
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal('');
   const [success, setSuccess] = createSignal('');
+  const [progress, setProgress] = createSignal(0);
+  const [expandedSQL, setExpandedSQL] = createSignal(false);
+  let progressInterval: NodeJS.Timeout | null = null;
 
   const handleFileUpload = (event: Event) => {
     const target = event.target as HTMLInputElement;
@@ -109,6 +112,31 @@ const CSVToSQL: Component = () => {
     return 'TEXT';
   };
 
+  const simulateProgress = () => {
+    setProgress(0);
+    // Clear any existing interval
+    if (progressInterval) {
+      clearInterval(progressInterval);
+    }
+    
+    progressInterval = setInterval(() => {
+      setProgress((prev) => {
+        // Move faster at the beginning, slower as we approach 95%
+        const increment = prev < 50 ? 8 : (prev < 80 ? 4 : 1);
+        // Only go up to 95% in simulation, the last 5% will be set when API call completes
+        if (prev >= 95) {
+          clearInterval(progressInterval!);
+          return 95;
+        }
+        return prev + increment;
+      });
+    }, 300); // Update more frequently (300ms)
+  };
+
+  onCleanup(() => {
+    if (progressInterval) clearInterval(progressInterval);
+  });
+
   const generateSQL = () => {
     const data = csvData();
     if (!data || !tableName()) return;
@@ -116,10 +144,11 @@ const CSVToSQL: Component = () => {
     setLoading(true);
     setError('');
     setSuccess('');
-    
+    simulateProgress(); // Start simulating progress
+
     try {
       // Convert data format for API
-      const apiData = data.data.map((row, rowIndex) => {
+      const apiData = data.data.map((row) => {
         const obj: Record<string, any> = {};
         data.headers.forEach((header, colIndex) => {
           obj[header] = row[colIndex];
@@ -130,6 +159,9 @@ const CSVToSQL: Component = () => {
       // Call Python backend API
       csvToSQL(apiData, tableName(), batchSize())
         .then(response => {
+          // Set progress to almost complete
+          setProgress(98);
+          
           // Combine create table and insert statements
           const fullSQL = [
             '-- Table creation',
@@ -141,15 +173,34 @@ const CSVToSQL: Component = () => {
           
           setSqlResult(fullSQL);
           setSuccess('SQL generated successfully!');
-          setLoading(false);
+          
+          // Complete the progress and delay closing the loading popup slightly
+          // to ensure the user sees the 100% completion
+          setProgress(100);
+          setTimeout(() => {
+            setLoading(false);
+          }, 500);
         })
         .catch(err => {
           setError(`Error generating SQL: ${err.message}`);
+          if (progressInterval) clearInterval(progressInterval);
           setLoading(false);
+        })
+        .finally(() => {
+          // Clear the interval if it's still running
+          if (progressInterval) {
+            clearInterval(progressInterval);
+            progressInterval = null;
+          }
         });
     } catch (err: any) {
       setError(`Error processing data: ${err.message}`);
+      if (progressInterval) {
+        clearInterval(progressInterval);
+        progressInterval = null;
+      }
       setLoading(false);
+      setProgress(0);
     }
   };
 
@@ -411,13 +462,45 @@ const CSVToSQL: Component = () => {
               </button>
             </div>
           </div>
-          <pre class={`border rounded-lg p-4 text-sm overflow-x-auto ${
-            theme() === 'dark' 
-              ? 'bg-gray-900 border-gray-600 text-gray-300' 
-              : 'bg-gray-50 border-gray-200 text-gray-900'
-          }`}>
-            <code>{sqlResult()}</code>
-          </pre>
+          <div class="relative">
+            <div class={`absolute right-2 top-2 z-10 ${expandedSQL() ? 'flex' : 'hidden'}`}>
+              <button
+                onClick={() => setExpandedSQL(false)}
+                class={`p-1 rounded-md ${
+                  theme() === 'dark' ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-100 hover:bg-gray-200'
+                }`}
+                title="Collapse SQL view"
+              >
+                <Minimize2 class="w-4 h-4" />
+              </button>
+            </div>
+            <pre 
+              class={`border rounded-lg p-4 text-sm ${
+                theme() === 'dark' 
+                  ? 'bg-gray-900 border-gray-600 text-gray-300' 
+                  : 'bg-gray-50 border-gray-200 text-gray-900'
+              } ${
+                expandedSQL() 
+                  ? 'h-auto max-h-none overflow-visible' 
+                  : 'h-60 overflow-auto'
+              }`}
+            >
+              <code>{sqlResult()}</code>
+            </pre>
+            <div class={`flex justify-center mt-2 ${expandedSQL() ? 'hidden' : ''}`}>
+              <button
+                onClick={() => setExpandedSQL(true)}
+                class={`flex items-center text-sm px-3 py-1 rounded-md ${
+                  theme() === 'dark'
+                    ? 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                    : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                }`}
+              >
+                <Maximize2 class="w-4 h-4 mr-1" />
+                Show full SQL
+              </button>
+            </div>
+          </div>
         </div>
       </Show>
 
@@ -452,6 +535,23 @@ const CSVToSQL: Component = () => {
             <span class={theme() === 'dark' ? 'text-green-300' : 'text-green-800'}>
               {success()}
             </span>
+          </div>
+        </div>
+      </Show>
+
+      {/* Loading Popup */}
+      <Show when={loading()}>
+        <div class="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50">
+          <div class="bg-white rounded-lg shadow-lg p-6 max-w-sm w-full text-center">
+            <div class="relative w-full h-4 bg-gray-200 rounded-full overflow-hidden mb-4">
+              <div
+                class="absolute top-0 left-0 h-full bg-blue-500 transition-all"
+                style={{ width: `${progress()}%` }}
+              ></div>
+            </div>
+            <p class="text-gray-700 text-sm">
+              Generating SQL, please wait... {progress()}%
+            </p>
           </div>
         </div>
       </Show>
