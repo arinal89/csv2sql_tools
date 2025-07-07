@@ -1,6 +1,6 @@
-import { createSignal, Show, For, onCleanup } from 'solid-js';
+import { createSignal, Show, For, onCleanup, createMemo } from 'solid-js';
 import type { Component } from 'solid-js';
-import { Upload, Download, Settings, AlertCircle, CheckCircle, X, FileText, Eye } from 'lucide-solid';
+import { Upload, Download, Settings, AlertCircle, CheckCircle, X, FileText, Eye, Search, BarChart3, Trash2, RefreshCw } from 'lucide-solid';
 import { useTheme } from '../contexts/ThemeContext';
 import Papa from 'papaparse';
 import { normalizeCSV } from '../services/api';
@@ -12,6 +12,18 @@ interface CSVFile {
   size: number;
   status: 'loading' | 'success' | 'error';
   errorMessage?: string;
+  lastModified?: number;
+  encoding?: string;
+  delimiter?: string;
+}
+
+interface NormalizationStats {
+  originalRows: number;
+  processedRows: number;
+  duplicatesRemoved: number;
+  emptyRowsRemoved: number;
+  columnsStandardized: number;
+  dataIssuesFixed: number;
 }
 
 const NormalizeCSV: Component = () => {
@@ -28,11 +40,54 @@ const NormalizeCSV: Component = () => {
   const [removeDuplicates, setRemoveDuplicates] = createSignal(true);
   const [trimWhitespace, setTrimWhitespace] = createSignal(true);
   const [standardizeHeaders, setStandardizeHeaders] = createSignal(true);
+  const [removeEmptyRows, setRemoveEmptyRows] = createSignal(true);
+  const [convertEncoding, setConvertEncoding] = createSignal(false);
+  const [fixDataTypes, setFixDataTypes] = createSignal(true);
+  const [validateEmails, setValidateEmails] = createSignal(false);
+  const [searchTerm, setSearchTerm] = createSignal('');
+  const [showStats, setShowStats] = createSignal(false);
+  const [normalizationStats, setNormalizationStats] = createSignal<NormalizationStats | null>(null);
+  const [showNormalizationOptions, setShowNormalizationOptions] = createSignal(true);
   let progressInterval: NodeJS.Timeout | null = null;
   
   onCleanup(() => {
     if (progressInterval) clearInterval(progressInterval);
   });
+
+  // Create filtered data memo for search functionality
+  const filteredNormalizedData = createMemo(() => {
+    const data = normalizedData();
+    const search = searchTerm().toLowerCase();
+    
+    if (!data || !search) return data;
+    
+    return data.filter(row => 
+      row.some(cell => 
+        String(cell || '').toLowerCase().includes(search)
+      )
+    );
+  });
+
+  // Function to highlight search terms in text
+  const highlightSearchTerm = (text: string) => {
+    const search = searchTerm().toLowerCase();
+    if (!search) return text;
+    
+    const index = text.toLowerCase().indexOf(search);
+    if (index === -1) return text;
+    
+    return (
+      <>
+        {text.substring(0, index)}
+        <span class={`font-semibold ${
+          theme() === 'dark' ? 'bg-yellow-600 text-yellow-100' : 'bg-yellow-200 text-yellow-800'
+        }`}>
+          {text.substring(index, index + search.length)}
+        </span>
+        {text.substring(index + search.length)}
+      </>
+    );
+  };
 
   const handleFileUpload = async (event: Event) => {
     const target = event.target as HTMLInputElement;
@@ -193,19 +248,121 @@ const NormalizeCSV: Component = () => {
     setLoading(true);
     setError('');
     setSuccess('');
+    setNormalizationStats(null);
     simulateProgress(); // Start simulating progress
 
     try {
       // Get the first file for demonstration purposes
       // In a real app, you might want to handle multiple files differently
       const firstFile = csvFiles()[0];
+      
+      // Calculate initial statistics
+      const initialStats: NormalizationStats = {
+        originalRows: firstFile.data.length,
+        processedRows: 0,
+        duplicatesRemoved: 0,
+        emptyRowsRemoved: 0,
+        columnsStandardized: 0,
+        dataIssuesFixed: 0
+      };
+
+      // Perform local normalization based on selected options
+      let processedData = [...firstFile.data];
+      let processedHeaders = [...firstFile.headers];
+      let stats = { ...initialStats };
+
+      // Remove empty rows
+      if (removeEmptyRows()) {
+        const originalLength = processedData.length;
+        processedData = processedData.filter(row => 
+          row.some(cell => cell !== null && cell !== undefined && cell !== '')
+        );
+        stats.emptyRowsRemoved = originalLength - processedData.length;
+      }
+
+      // Trim whitespace
+      if (trimWhitespace()) {
+        processedData = processedData.map(row => 
+          row.map(cell => typeof cell === 'string' ? cell.trim() : cell)
+        );
+        stats.dataIssuesFixed += processedData.length;
+      }
+
+      // Remove duplicates
+      if (removeDuplicates()) {
+        const originalLength = processedData.length;
+        const uniqueRows = new Set();
+        processedData = processedData.filter(row => {
+          const rowKey = row.join('|');
+          if (uniqueRows.has(rowKey)) {
+            return false;
+          }
+          uniqueRows.add(rowKey);
+          return true;
+        });
+        stats.duplicatesRemoved = originalLength - processedData.length;
+      }
+
+      // Standardize headers
+      if (standardizeHeaders()) {
+        const originalHeaders = [...processedHeaders];
+        processedHeaders = processedHeaders.map(standardizeHeader);
+        stats.columnsStandardized = processedHeaders.filter((header, index) => 
+          header !== originalHeaders[index]
+        ).length;
+      }
+
+      // Fix data types
+      if (fixDataTypes()) {
+        processedData = processedData.map(row => 
+          row.map(cell => {
+            if (typeof cell === 'string') {
+              // Try to convert to number
+              const num = parseFloat(cell);
+              if (!isNaN(num) && isFinite(num) && cell.trim() !== '') {
+                return num;
+              }
+              // Try to convert to date
+              const date = new Date(cell);
+              if (!isNaN(date.getTime()) && cell.match(/^\d{4}-\d{2}-\d{2}/) || cell.match(/^\d{1,2}\/\d{1,2}\/\d{4}/)) {
+                return date.toISOString().split('T')[0];
+              }
+            }
+            return cell;
+          })
+        );
+        stats.dataIssuesFixed += processedData.length;
+      }
+
+      // Validate emails
+      if (validateEmails()) {
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        processedData = processedData.map(row => 
+          row.map(cell => {
+            if (typeof cell === 'string' && cell.includes('@')) {
+              if (!emailRegex.test(cell)) {
+                // Try to fix common email issues
+                const fixed = cell.toLowerCase().replace(/\s+/g, '').replace(/[,;]/g, '');
+                if (emailRegex.test(fixed)) {
+                  stats.dataIssuesFixed++;
+                  return fixed;
+                }
+              }
+            }
+            return cell;
+          })
+        );
+      }
+
+      stats.processedRows = processedData.length;
+
       const file = new File(
-        [Papa.unparse({ fields: firstFile.headers, data: firstFile.data })], 
+        [Papa.unparse({ fields: processedHeaders, data: processedData })], 
         firstFile.name,
         { type: 'text/csv' }
       );
 
-      // Call Python backend API for normalization
+      // Call Python backend API for additional normalization
       const result = await normalizeCSV(file);
       
       // Set progress to almost complete
@@ -224,8 +381,16 @@ const NormalizeCSV: Component = () => {
           setNormalizedHeaders(headers);
           setNormalizedData(data);
           
+          // Update final statistics
+          stats.processedRows = data.length;
+          if (showStats()) {
+            setNormalizationStats(stats);
+          }
+          
           // Create success message and append warning if present
-          let successMsg = `Data normalized successfully! ${result.rowCount} rows processed.`;
+          let successMsg = `Data normalized successfully! ${stats.processedRows} rows processed.`;
+          if (stats.duplicatesRemoved > 0) successMsg += ` ${stats.duplicatesRemoved} duplicates removed.`;
+          if (stats.emptyRowsRemoved > 0) successMsg += ` ${stats.emptyRowsRemoved} empty rows removed.`;
           if (result.warning) {
             successMsg += ` (Note: ${result.warning})`;
           }
@@ -236,7 +401,18 @@ const NormalizeCSV: Component = () => {
           setSuccess('Data normalized, but no rows were returned.');
         }
       } else {
-        throw new Error('Invalid response from server');
+        // If backend fails, use locally processed data
+        setNormalizedHeaders(processedHeaders);
+        setNormalizedData(processedData);
+        
+        if (showStats()) {
+          setNormalizationStats(stats);
+        }
+        
+        let successMsg = `Data normalized locally! ${stats.processedRows} rows processed.`;
+        if (stats.duplicatesRemoved > 0) successMsg += ` ${stats.duplicatesRemoved} duplicates removed.`;
+        if (stats.emptyRowsRemoved > 0) successMsg += ` ${stats.emptyRowsRemoved} empty rows removed.`;
+        setSuccess(successMsg);
       }
       
       // Complete the progress and delay closing the loading popup
@@ -376,65 +552,195 @@ const NormalizeCSV: Component = () => {
             ? 'bg-gray-800 border-gray-700' 
             : 'bg-white border-gray-200'
         }`}>
-          <h2 class={`text-lg font-semibold mb-4 ${
-            theme() === 'dark' ? 'text-white' : 'text-gray-900'
-          }`}>
-            Normalization Options
-          </h2>
-          <div class="space-y-4">
-            <div class="flex items-center">
-              <input
-                type="checkbox"
-                id="removeDuplicates"
-                checked={removeDuplicates()}
-                onChange={(e) => setRemoveDuplicates(e.target.checked)}
-                class="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded"
-              />
-              <label for="removeDuplicates" class={`ml-2 block text-sm ${
-                theme() === 'dark' ? 'text-gray-300' : 'text-gray-900'
-              }`}>
-                Remove duplicate rows
-              </label>
-            </div>
-
-            <div class="flex items-center">
-              <input
-                type="checkbox"
-                id="trimWhitespace"
-                checked={trimWhitespace()}
-                onChange={(e) => setTrimWhitespace(e.target.checked)}
-                class="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded"
-              />
-              <label for="trimWhitespace" class={`ml-2 block text-sm ${
-                theme() === 'dark' ? 'text-gray-300' : 'text-gray-900'
-              }`}>
-                Trim whitespace from cells
-              </label>
-            </div>
-
-            <div class="flex items-center">
-              <input
-                type="checkbox"
-                id="standardizeHeaders"
-                checked={standardizeHeaders()}
-                onChange={(e) => setStandardizeHeaders(e.target.checked)}
-                class="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded"
-              />
-              <label for="standardizeHeaders" class={`ml-2 block text-sm ${
-                theme() === 'dark' ? 'text-gray-300' : 'text-gray-900'
-              }`}>
-                Standardize column headers (lowercase, underscores)
-              </label>
-            </div>
-
+          <div class="flex items-center justify-between mb-4">
+            <h2 class={`text-lg font-semibold ${
+              theme() === 'dark' ? 'text-white' : 'text-gray-900'
+            }`}>
+              Normalization Options
+            </h2>
             <button
-              onClick={normalizeData}
-              disabled={loading()}
-              class="btn btn-primary btn-md disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={() => setShowNormalizationOptions(!showNormalizationOptions())}
+              class={`p-2 rounded-lg transition-colors ${
+                theme() === 'dark' 
+                  ? 'text-gray-400 hover:text-gray-300 hover:bg-gray-700' 
+                  : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+              }`}
+              title={showNormalizationOptions() ? 'Minimize options' : 'Expand options'}
             >
-              {loading() ? 'Normalizing...' : 'Normalize Data'}
+              {showNormalizationOptions() ? '−' : '+'}
             </button>
           </div>
+          
+          <Show when={showNormalizationOptions()}>
+            <div class="space-y-4">
+              <div class="flex items-center">
+                <input
+                  type="checkbox"
+                  id="removeDuplicates"
+                  checked={removeDuplicates()}
+                  onChange={(e) => setRemoveDuplicates(e.target.checked)}
+                  class="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded"
+                />
+                <label for="removeDuplicates" class={`ml-2 block text-sm ${
+                  theme() === 'dark' ? 'text-gray-300' : 'text-gray-900'
+                }`}>
+                  Remove duplicate rows
+                </label>
+              </div>
+
+              <div class="flex items-center">
+                <input
+                  type="checkbox"
+                  id="trimWhitespace"
+                  checked={trimWhitespace()}
+                  onChange={(e) => setTrimWhitespace(e.target.checked)}
+                  class="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded"
+                />
+                <label for="trimWhitespace" class={`ml-2 block text-sm ${
+                  theme() === 'dark' ? 'text-gray-300' : 'text-gray-900'
+                }`}>
+                  Trim whitespace from cells
+                </label>
+              </div>
+
+              <div class="flex items-center">
+                <input
+                  type="checkbox"
+                  id="standardizeHeaders"
+                  checked={standardizeHeaders()}
+                  onChange={(e) => setStandardizeHeaders(e.target.checked)}
+                  class="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded"
+                />
+                <label for="standardizeHeaders" class={`ml-2 block text-sm ${
+                  theme() === 'dark' ? 'text-gray-300' : 'text-gray-900'
+                }`}>
+                  Standardize column headers (lowercase, underscores)
+                </label>
+              </div>
+
+              <div class="flex items-center">
+                <input
+                  type="checkbox"
+                  id="removeEmptyRows"
+                  checked={removeEmptyRows()}
+                  onChange={(e) => setRemoveEmptyRows(e.target.checked)}
+                  class="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded"
+                />
+                <label for="removeEmptyRows" class={`ml-2 block text-sm ${
+                  theme() === 'dark' ? 'text-gray-300' : 'text-gray-900'
+                }`}>
+                  Remove empty rows
+                </label>
+              </div>
+
+              <div class="flex items-center">
+                <input
+                  type="checkbox"
+                  id="fixDataTypes"
+                  checked={fixDataTypes()}
+                  onChange={(e) => setFixDataTypes(e.target.checked)}
+                  class="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded"
+                />
+                <label for="fixDataTypes" class={`ml-2 block text-sm ${
+                  theme() === 'dark' ? 'text-gray-300' : 'text-gray-900'
+                }`}>
+                  Fix data types (convert strings to numbers/dates where appropriate)
+                </label>
+              </div>
+
+              <div class="flex items-center">
+                <input
+                  type="checkbox"
+                  id="validateEmails"
+                  checked={validateEmails()}
+                  onChange={(e) => setValidateEmails(e.target.checked)}
+                  class="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded"
+                />
+                <label for="validateEmails" class={`ml-2 block text-sm ${
+                  theme() === 'dark' ? 'text-gray-300' : 'text-gray-900'
+                }`}>
+                  Validate and fix email addresses
+                </label>
+              </div>
+
+              <div class="flex items-center">
+                <input
+                  type="checkbox"
+                  id="convertEncoding"
+                  checked={convertEncoding()}
+                  onChange={(e) => setConvertEncoding(e.target.checked)}
+                  class="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded"
+                />
+                <label for="convertEncoding" class={`ml-2 block text-sm ${
+                  theme() === 'dark' ? 'text-gray-300' : 'text-gray-900'
+                }`}>
+                  Convert encoding to UTF-8
+                </label>
+              </div>
+
+              <div class="flex items-center">
+                <input
+                  type="checkbox"
+                  id="showStats"
+                  checked={showStats()}
+                  onChange={(e) => setShowStats(e.target.checked)}
+                  class="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded"
+                />
+                <label for="showStats" class={`ml-2 block text-sm ${
+                  theme() === 'dark' ? 'text-gray-300' : 'text-gray-900'
+                }`}>
+                  Show normalization statistics
+                </label>
+              </div>
+
+              <button
+                onClick={normalizeData}
+                disabled={loading()}
+                class="btn btn-primary btn-md disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loading() ? 'Normalizing...' : 'Normalize Data'}
+              </button>
+            </div>
+          </Show>
+          
+          <Show when={!showNormalizationOptions()}>
+            <div class={`p-4 rounded-lg ${
+              theme() === 'dark' ? 'bg-gray-700' : 'bg-gray-50'
+            }`}>
+              <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-4">
+                  <div class="flex items-center space-x-2">
+                    <span class={`text-sm font-medium ${
+                      theme() === 'dark' ? 'text-gray-300' : 'text-gray-600'
+                    }`}>
+                      Options enabled:
+                    </span>
+                    <span class={`text-sm font-bold ${
+                      theme() === 'dark' ? 'text-white' : 'text-gray-900'
+                    }`}>
+                      {[
+                        removeDuplicates() && 'Remove duplicates',
+                        trimWhitespace() && 'Trim whitespace',
+                        standardizeHeaders() && 'Standardize headers',
+                        removeEmptyRows() && 'Remove empty rows',
+                        fixDataTypes() && 'Fix data types',
+                        validateEmails() && 'Validate emails',
+                        convertEncoding() && 'Convert encoding',
+                        showStats() && 'Show stats'
+                      ].filter(Boolean).length}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  onClick={normalizeData}
+                  disabled={loading()}
+                  class="btn btn-primary btn-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {loading() ? 'Normalizing...' : 'Normalize Data'}
+                </button>
+              </div>
+            </div>
+          </Show>
         </div>
       </Show>
 
@@ -451,16 +757,38 @@ const NormalizeCSV: Component = () => {
             }`}>
               Loaded Files ({csvFiles().length})
             </h2>
-            <button
-              onClick={() => setCsvFiles([])}
-              class={`text-sm px-3 py-1 rounded-md transition-colors ${
-                theme() === 'dark' 
-                  ? 'text-red-400 hover:text-red-300 hover:bg-red-900/20' 
-                  : 'text-red-600 hover:text-red-800 hover:bg-red-50'
-              }`}
-            >
-              Clear All
-            </button>
+            <div class="flex items-center space-x-2">
+              <button
+                onClick={() => {
+                  setNormalizedData(null);
+                  setNormalizedHeaders([]);
+                  setNormalizationStats(null);
+                  setSuccess('');
+                  setError('');
+                }}
+                class={`text-sm px-3 py-1 rounded-md transition-colors ${
+                  theme() === 'dark' 
+                    ? 'text-blue-400 hover:text-blue-300 hover:bg-blue-900/20' 
+                    : 'text-blue-600 hover:text-blue-800 hover:bg-blue-50'
+                }`}
+                title="Clear results"
+              >
+                <RefreshCw class="w-4 h-4 inline mr-1" />
+                Reset
+              </button>
+              <button
+                onClick={() => setCsvFiles([])}
+                class={`text-sm px-3 py-1 rounded-md transition-colors ${
+                  theme() === 'dark' 
+                    ? 'text-red-400 hover:text-red-300 hover:bg-red-900/20' 
+                    : 'text-red-600 hover:text-red-800 hover:bg-red-50'
+                }`}
+                title="Remove all files"
+              >
+                <Trash2 class="w-4 h-4 inline mr-1" />
+                Clear All
+              </button>
+            </div>
           </div>
           <div class="space-y-3">
             <For each={csvFiles()}>
@@ -738,6 +1066,165 @@ const NormalizeCSV: Component = () => {
         </div>
       </Show>
 
+      {/* Normalization Statistics */}
+      <Show when={normalizationStats() && showStats()}>
+        <div class={`rounded-lg shadow-sm border p-6 ${
+          theme() === 'dark' 
+            ? 'bg-gray-800 border-gray-700' 
+            : 'bg-white border-gray-200'
+        }`}>
+          <div class="flex items-center justify-between mb-4">
+            <h2 class={`text-lg font-semibold ${
+              theme() === 'dark' ? 'text-white' : 'text-gray-900'
+            }`}>
+              <BarChart3 class="w-5 h-5 inline mr-2" />
+              Normalization Statistics
+            </h2>
+            <button
+              onClick={() => setShowStats(false)}
+              class={`p-1 rounded-md transition-colors ${
+                theme() === 'dark' 
+                  ? 'text-gray-500 hover:text-gray-400 hover:bg-gray-700' 
+                  : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+              }`}
+              title="Hide statistics"
+            >
+              <X class="w-4 h-4" />
+            </button>
+          </div>
+          
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div class={`p-4 rounded-lg ${
+              theme() === 'dark' ? 'bg-gray-700' : 'bg-gray-50'
+            }`}>
+              <div class="flex items-center justify-between">
+                <span class={`text-sm font-medium ${
+                  theme() === 'dark' ? 'text-gray-300' : 'text-gray-600'
+                }`}>
+                  Original Rows
+                </span>
+                <span class={`text-2xl font-bold ${
+                  theme() === 'dark' ? 'text-white' : 'text-gray-900'
+                }`}>
+                  {normalizationStats()?.originalRows.toLocaleString()}
+                </span>
+              </div>
+            </div>
+            
+            <div class={`p-4 rounded-lg ${
+              theme() === 'dark' ? 'bg-gray-700' : 'bg-gray-50'
+            }`}>
+              <div class="flex items-center justify-between">
+                <span class={`text-sm font-medium ${
+                  theme() === 'dark' ? 'text-gray-300' : 'text-gray-600'
+                }`}>
+                  Processed Rows
+                </span>
+                <span class={`text-2xl font-bold ${
+                  theme() === 'dark' ? 'text-green-400' : 'text-green-600'
+                }`}>
+                  {normalizationStats()?.processedRows.toLocaleString()}
+                </span>
+              </div>
+            </div>
+            
+            <div class={`p-4 rounded-lg ${
+              theme() === 'dark' ? 'bg-gray-700' : 'bg-gray-50'
+            }`}>
+              <div class="flex items-center justify-between">
+                <span class={`text-sm font-medium ${
+                  theme() === 'dark' ? 'text-gray-300' : 'text-gray-600'
+                }`}>
+                  Duplicates Removed
+                </span>
+                <span class={`text-2xl font-bold ${
+                  theme() === 'dark' ? 'text-red-400' : 'text-red-600'
+                }`}>
+                  {normalizationStats()?.duplicatesRemoved.toLocaleString()}
+                </span>
+              </div>
+            </div>
+            
+            <div class={`p-4 rounded-lg ${
+              theme() === 'dark' ? 'bg-gray-700' : 'bg-gray-50'
+            }`}>
+              <div class="flex items-center justify-between">
+                <span class={`text-sm font-medium ${
+                  theme() === 'dark' ? 'text-gray-300' : 'text-gray-600'
+                }`}>
+                  Empty Rows Removed
+                </span>
+                <span class={`text-2xl font-bold ${
+                  theme() === 'dark' ? 'text-orange-400' : 'text-orange-600'
+                }`}>
+                  {normalizationStats()?.emptyRowsRemoved.toLocaleString()}
+                </span>
+              </div>
+            </div>
+            
+            <div class={`p-4 rounded-lg ${
+              theme() === 'dark' ? 'bg-gray-700' : 'bg-gray-50'
+            }`}>
+              <div class="flex items-center justify-between">
+                <span class={`text-sm font-medium ${
+                  theme() === 'dark' ? 'text-gray-300' : 'text-gray-600'
+                }`}>
+                  Columns Standardized
+                </span>
+                <span class={`text-2xl font-bold ${
+                  theme() === 'dark' ? 'text-blue-400' : 'text-blue-600'
+                }`}>
+                  {normalizationStats()?.columnsStandardized.toLocaleString()}
+                </span>
+              </div>
+            </div>
+            
+            <div class={`p-4 rounded-lg ${
+              theme() === 'dark' ? 'bg-gray-700' : 'bg-gray-50'
+            }`}>
+              <div class="flex items-center justify-between">
+                <span class={`text-sm font-medium ${
+                  theme() === 'dark' ? 'text-gray-300' : 'text-gray-600'
+                }`}>
+                  Data Issues Fixed
+                </span>
+                <span class={`text-2xl font-bold ${
+                  theme() === 'dark' ? 'text-purple-400' : 'text-purple-600'
+                }`}>
+                  {normalizationStats()?.dataIssuesFixed.toLocaleString()}
+                </span>
+              </div>
+            </div>
+          </div>
+          
+          <div class={`mt-6 p-4 rounded-lg ${
+            theme() === 'dark' ? 'bg-blue-900/20' : 'bg-blue-50'
+          }`}>
+            <h3 class={`text-sm font-medium mb-2 ${
+              theme() === 'dark' ? 'text-blue-300' : 'text-blue-800'
+            }`}>
+              Processing Summary
+            </h3>
+            <div class="text-sm space-y-1">
+              <div class={theme() === 'dark' ? 'text-blue-200' : 'text-blue-700'}>
+                <strong>Data Reduction:</strong> {
+                  normalizationStats()?.originalRows && normalizationStats()?.processedRows
+                    ? ((normalizationStats()!.originalRows - normalizationStats()!.processedRows) / normalizationStats()!.originalRows * 100).toFixed(1)
+                    : 0
+                }% of rows removed
+              </div>
+              <div class={theme() === 'dark' ? 'text-blue-200' : 'text-blue-700'}>
+                <strong>Quality Score:</strong> {
+                  normalizationStats()?.originalRows 
+                    ? Math.max(0, 100 - (normalizationStats()!.duplicatesRemoved + normalizationStats()!.emptyRowsRemoved) / normalizationStats()!.originalRows * 100).toFixed(1)
+                    : 100
+                }% (higher is better)
+              </div>
+            </div>
+          </div>
+        </div>
+      </Show>
+
       {/* Normalized Data Preview */}
       <Show when={normalizedData()}>
         <div class={`rounded-lg shadow-sm border p-6 ${
@@ -749,14 +1236,84 @@ const NormalizeCSV: Component = () => {
             <h2 class={`text-lg font-semibold ${
               theme() === 'dark' ? 'text-white' : 'text-gray-900'
             }`}>Normalized Data Preview</h2>
-            <button
-              onClick={downloadNormalizedCSV}
-              class="btn btn-primary btn-sm"
-            >
-              <Download class="w-4 h-4 mr-2" />
-              Download CSV
-            </button>
+            <div class="flex items-center space-x-2">
+              <div class="flex items-center space-x-2">
+                <button
+                  onClick={downloadNormalizedCSV}
+                  class="btn btn-primary btn-sm"
+                >
+                  <Download class="w-4 h-4 mr-2" />
+                  Download CSV
+                </button>
+                <button
+                  onClick={() => {
+                    const data = normalizedData();
+                    const headers = normalizedHeaders();
+                    if (!data || !headers) return;
+                    
+                    const jsonData = data.map(row => {
+                      const obj: any = {};
+                      headers.forEach((header, index) => {
+                        obj[header] = row[index];
+                      });
+                      return obj;
+                    });
+                    
+                    const blob = new Blob([JSON.stringify(jsonData, null, 2)], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'normalized_data.json';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    setSuccess('Normalized JSON downloaded!');
+                  }}
+                  class="btn btn-secondary btn-sm"
+                >
+                  <Download class="w-4 h-4 mr-2" />
+                  Download JSON
+                </button>
+              </div>
+            </div>
           </div>
+          
+          {/* Search and Filter */}
+          <div class="mb-4">
+            <div class="flex items-center space-x-2">
+              <div class="flex-1 relative">
+                <Search class={`absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 ${
+                  theme() === 'dark' ? 'text-gray-500' : 'text-gray-400'
+                }`} />
+                <input
+                  type="text"
+                  placeholder="Search in data..."
+                  value={searchTerm()}
+                  onInput={(e) => setSearchTerm(e.target.value)}
+                  class={`w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 ${
+                    theme() === 'dark' 
+                      ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' 
+                      : 'bg-white border-gray-300 text-gray-900 placeholder-gray-500'
+                  }`}
+                />
+              </div>
+              <Show when={searchTerm()}>
+                <button
+                  onClick={() => setSearchTerm('')}
+                  class={`p-2 rounded-lg transition-colors ${
+                    theme() === 'dark' 
+                      ? 'text-gray-400 hover:text-gray-300 hover:bg-gray-700' 
+                      : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+                  }`}
+                  title="Clear search"
+                >
+                  <X class="w-4 h-4" />
+                </button>
+              </Show>
+            </div>
+          </div>
+          
           <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
               <thead class={theme() === 'dark' ? 'bg-gray-700' : 'bg-gray-50'}>
@@ -777,7 +1334,7 @@ const NormalizeCSV: Component = () => {
                   ? 'bg-gray-800 divide-gray-700' 
                   : 'bg-white divide-gray-200'
               }`}>
-                <For each={normalizedData()?.slice(0, 10)}>
+                <For each={filteredNormalizedData()?.slice(0, 10)}>
                   {(row) => (
                     <tr>
                       <For each={row}>
@@ -785,7 +1342,7 @@ const NormalizeCSV: Component = () => {
                           <td class={`px-6 py-4 whitespace-nowrap text-sm ${
                             theme() === 'dark' ? 'text-gray-300' : 'text-gray-900'
                           }`}>
-                            {cell || 'NULL'}
+                            {highlightSearchTerm(String(cell || 'NULL'))}
                           </td>
                         )}
                       </For>
@@ -795,13 +1352,31 @@ const NormalizeCSV: Component = () => {
               </tbody>
             </table>
           </div>
-          <Show when={normalizedData() && normalizedData()!.length > 10}>
-            <p class={`text-sm mt-2 ${
+          
+          <div class="mt-4 flex items-center justify-between">
+            <div class={`text-sm ${
               theme() === 'dark' ? 'text-gray-400' : 'text-gray-500'
             }`}>
-              Showing first 10 rows of {normalizedData()!.length} total rows
-            </p>
-          </Show>
+              <Show when={searchTerm()}>
+                Showing {Math.min(10, filteredNormalizedData()?.length || 0)} of {filteredNormalizedData()?.length} filtered rows
+                <span class="mx-2">•</span>
+              </Show>
+              <Show when={!searchTerm()}>
+                Showing first 10 rows of {normalizedData()!.length} total rows
+              </Show>
+              <Show when={searchTerm()}>
+                Total: {normalizedData()!.length} rows
+              </Show>
+            </div>
+            
+            <Show when={searchTerm() && filteredNormalizedData()?.length === 0}>
+              <div class={`text-sm ${
+                theme() === 'dark' ? 'text-gray-400' : 'text-gray-500'
+              }`}>
+                No results found for "{searchTerm()}"
+              </div>
+            </Show>
+          </div>
         </div>
       </Show>
 

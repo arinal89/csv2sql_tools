@@ -79,39 +79,6 @@ const CSVToSQL: Component = () => {
     });
   };
 
-  const detectDataType = (values: any[]): string => {
-    const nonEmptyValues = values.filter(v => v !== null && v !== undefined && v !== '');
-    if (nonEmptyValues.length === 0) return 'TEXT';
-
-    const sample = nonEmptyValues.slice(0, 100); // Sample first 100 values
-    
-    // Check if all values are integers
-    if (sample.every(v => /^-?\d+$/.test(v))) {
-      return 'INTEGER';
-    }
-
-    // Check if all values are numbers (including floats)
-    if (sample.every(v => !isNaN(Number(v)) && !isNaN(parseFloat(v)))) {
-      return 'DECIMAL(10,2)';
-    }
-
-    // Check if all values are dates
-    if (sample.every(v => !isNaN(Date.parse(v)))) {
-      return 'DATE';
-    }
-
-    // Check if all values are booleans
-    if (sample.every(v => ['true', 'false', '1', '0', 'yes', 'no'].includes(v.toLowerCase()))) {
-      return 'BOOLEAN';
-    }
-
-    // Default to TEXT with appropriate length
-    const maxLength = Math.max(...sample.map(v => String(v).length));
-    if (maxLength <= 50) return 'VARCHAR(50)';
-    if (maxLength <= 255) return 'VARCHAR(255)';
-    return 'TEXT';
-  };
-
   const simulateProgress = () => {
     setProgress(0);
     // Clear any existing interval

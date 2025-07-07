@@ -40,8 +40,6 @@ const NullHandling: Component = () => {
     removeRowsWithAllNull: true
   });
 
-  const [columnConfigs, setColumnConfigs] = createSignal<Map<string, NullHandlingConfig>>(new Map());
-
   const handleFileUpload = (event: Event) => {
     const target = event.target as HTMLInputElement;
     const file = target.files?.[0];
@@ -134,12 +132,11 @@ const NullHandling: Component = () => {
 
     setColumnStats(stats);
 
-    // Initialize column configs
-    const configs = new Map<string, NullHandlingConfig>();
-    headers.forEach(header => {
-      configs.set(header, { ...globalConfig() });
-    });
-    setColumnConfigs(configs);
+    // Initialize column configs (for future use)
+    // const configs = new Map<string, NullHandlingConfig>();
+    // headers.forEach(header => {
+    //   configs.set(header, { ...globalConfig() });
+    // });
   };
 
   // Function to update individual column configuration (reserved for future use)
@@ -151,12 +148,12 @@ const NullHandling: Component = () => {
   // };
 
   const applyGlobalConfig = () => {
-    const global = globalConfig();
-    const configs = new Map<string, NullHandlingConfig>();
-    columnStats().forEach(stat => {
-      configs.set(stat.name, { ...global });
-    });
-    setColumnConfigs(configs);
+    // Apply global configuration to all columns (for future use)
+    // const global = globalConfig();
+    // const configs = new Map<string, NullHandlingConfig>();
+    // columnStats().forEach(stat => {
+    //   configs.set(stat.name, { ...global });
+    // });
   };
 
   const processNulls = async () => {
@@ -175,7 +172,7 @@ const NullHandling: Component = () => {
 
     try {
       // Convert data format for API
-      const apiData = data.data.map((row, rowIndex) => {
+      const apiData = data.data.map((row) => {
         const obj: Record<string, any> = {};
         data.headers.forEach((header, colIndex) => {
           obj[header] = row[colIndex];
@@ -197,7 +194,6 @@ const NullHandling: Component = () => {
         fillValue = config.defaultValue;
       } else {
         // 'keep' strategy - we'll just return the data as is
-        const headers = data.headers;
         setProcessedData(data.data);
         setSuccess('Null values kept as is');
         setLoading(false);

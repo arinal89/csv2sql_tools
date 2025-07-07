@@ -117,7 +117,7 @@ const SQLSplitter: Component = () => {
         const fileName = file.name.replace('.sql', '');
         
         // Create split files
-        const files: SQLFile[] = chunks.map((chunk, index) => {
+        const files: SQLFile[] = chunks.map((chunk: string, index: number) => {
           const name = `${fileName}_part${index + 1}.sql`;
           return {
             name,

@@ -1,8 +1,8 @@
-import { createSignal, Show, For, createMemo } from 'solid-js';
+import { createSignal, Show, For } from 'solid-js';
 import type { Component } from 'solid-js';
 import { 
   Upload, Download, Type, AlertCircle, CheckCircle, Loader, Database, 
-  Copy, FileDown, Settings, Layers, Filter, Code
+  Copy, Settings
 } from 'lucide-solid';
 import { useTheme } from '../contexts/ThemeContext';
 import Papa from 'papaparse';
@@ -602,9 +602,6 @@ const DataTypeCSV: Component = () => {
     setSuccess('SQL file downloaded!');
   };
 
-  const [fullDataset, setFullDataset] = createSignal<any[][] | null>(null); // Store full dataset for better performance
-  const [currentFileCacheKey, setCurrentFileCacheKey] = createSignal<string>('');
-  
   // Create a cache for parsed CSV files
   const csvCache = new Map<string, {
     headers: string[],
